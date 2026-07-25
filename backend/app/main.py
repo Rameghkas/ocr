@@ -8,9 +8,10 @@ from bson import ObjectId
 
 from app.config import settings
 from app.database import connect_to_mongo, close_mongo_connection, get_database
-from app.models import UserCreate, UserResponse, Token, DocumentResponse
+from app.models import UserCreate, UserResponse, Token, DocumentResponse, StructuredChallan
 from app.auth import get_password_hash, verify_password, create_access_token, get_current_user
 from app.ocr_service import run_ocr_task
+from app.parser import extract_challan_data
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -87,12 +88,16 @@ async def process_document_ocr(document_id: str, file_bytes: bytes):
         # Execute OCR offloaded to background thread
         extracted_text = await run_ocr_task(file_bytes)
 
-        # Update status to completed with raw text
+        # Run heuristic extraction to get structured fields
+        structured_info = extract_challan_data(extracted_text)
+
+        # Update status to completed with raw text and structured data
         await db.documents.update_one(
             {"_id": ObjectId(document_id)},
             {"$set": {
                 "status": "completed",
                 "raw_text": extracted_text,
+                "structured_data": structured_info,
                 "error_message": None
             }}
         )
@@ -124,6 +129,7 @@ async def upload_document(
         "upload_date": datetime.utcnow(),
         "raw_text": "",
         "status": "queued",
+        "structured_data": None,
         "error_message": None
     }
     result = await db.documents.insert_one(doc_entry)
@@ -139,6 +145,7 @@ async def upload_document(
         "upload_date": doc_entry["upload_date"],
         "raw_text": "",
         "status": "queued",
+        "structured_data": None,
         "error_message": None
     }
 
@@ -155,6 +162,7 @@ async def list_documents(current_user: dict = Depends(get_current_user)):
             "upload_date": doc["upload_date"],
             "raw_text": doc.get("raw_text", ""),
             "status": doc.get("status", "queued"),
+            "structured_data": doc.get("structured_data"),
             "error_message": doc.get("error_message")
         })
     return documents
@@ -177,7 +185,41 @@ async def get_document(document_id: str, current_user: dict = Depends(get_curren
         "upload_date": doc["upload_date"],
         "raw_text": doc.get("raw_text", ""),
         "status": doc.get("status", "queued"),
+        "structured_data": doc.get("structured_data"),
         "error_message": doc.get("error_message")
+    }
+
+@app.put("/api/documents/{document_id}/structured", response_model=DocumentResponse)
+async def update_structured_data(
+    document_id: str,
+    structured_data: StructuredChallan,
+    current_user: dict = Depends(get_current_user)
+):
+    db = get_database()
+    try:
+        doc = await db.documents.find_one({"_id": ObjectId(document_id), "user_id": current_user["id"]})
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid Document ID format")
+        
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    await db.documents.update_one(
+        {"_id": ObjectId(document_id)},
+        {"$set": {"structured_data": structured_data.model_dump()}}
+    )
+    
+    # Retrieve updated document
+    updated_doc = await db.documents.find_one({"_id": ObjectId(document_id)})
+    return {
+        "id": str(updated_doc["_id"]),
+        "user_id": updated_doc["user_id"],
+        "filename": updated_doc["filename"],
+        "upload_date": updated_doc["upload_date"],
+        "raw_text": updated_doc.get("raw_text", ""),
+        "status": updated_doc.get("status", "queued"),
+        "structured_data": updated_doc.get("structured_data"),
+        "error_message": updated_doc.get("error_message")
     }
 
 @app.delete("/api/documents/{document_id}")

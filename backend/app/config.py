@@ -8,6 +8,9 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 1440
     TESSERACT_CMD: Optional[str] = None
+    OCR_PROVIDER: str = "tesseract"
+    OCR_MODEL: str = "gemini-2.5-pro"
+    GEMINI_API_KEY: Optional[str] = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 

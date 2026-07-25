@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   LogOut, Upload, Camera, FileText, CheckCircle2,
-  AlertCircle, Loader2, Copy, Check, RefreshCw, Trash2, FileCheck
+  AlertCircle, Loader2, Copy, Check, RefreshCw, Trash2, FileCheck,
+  Calendar, MapPin, Scale, Coins, Edit, Save, X, Eye
 } from 'lucide-react';
 
 export default function Dashboard({ token, onLogout }) {
@@ -12,6 +13,76 @@ export default function Dashboard({ token, onLogout }) {
   const [loadingDocs, setLoadingDocs] = useState(false);
   const [copied, setCopied] = useState(false);
   const [uploadError, setUploadError] = useState('');
+
+  const [activeTab, setActiveTab] = useState('structured');
+  const [isEditing, setIsEditing] = useState(false);
+  const [editedData, setEditedData] = useState({
+    challan_date: '',
+    source_address: '',
+    destination_address: '',
+    total_kg: '',
+    total_cost: ''
+  });
+  const [savingFields, setSavingFields] = useState(false);
+  const [copiedField, setCopiedField] = useState(null);
+
+  // Sync edits state when a document changes or its status completes
+  useEffect(() => {
+    if (selectedDoc) {
+      setEditedData({
+        challan_date: selectedDoc.structured_data?.challan_date || '',
+        source_address: selectedDoc.structured_data?.source_address || '',
+        destination_address: selectedDoc.structured_data?.destination_address || '',
+        total_kg: selectedDoc.structured_data?.total_kg !== null && selectedDoc.structured_data?.total_kg !== undefined ? selectedDoc.structured_data.total_kg : '',
+        total_cost: selectedDoc.structured_data?.total_cost !== null && selectedDoc.structured_data?.total_cost !== undefined ? selectedDoc.structured_data.total_cost : ''
+      });
+      setIsEditing(false);
+      // Reset to structured tab when a new document is selected
+      if (selectedDoc.status !== 'completed') {
+        setActiveTab('structured');
+      }
+    }
+  }, [selectedDoc?.id, selectedDoc?.status]);
+
+  const copyField = (fieldKey, value) => {
+    if (!value) return;
+    navigator.clipboard.writeText(value.toString());
+    setCopiedField(fieldKey);
+    setTimeout(() => setCopiedField(null), 1500);
+  };
+
+  const handleSaveStructuredData = async () => {
+    setSavingFields(true);
+    try {
+      const response = await fetch(`/api/documents/${selectedDoc.id}/structured`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          challan_date: editedData.challan_date || null,
+          source_address: editedData.source_address || null,
+          destination_address: editedData.destination_address || null,
+          total_kg: editedData.total_kg !== '' ? parseFloat(editedData.total_kg) : null,
+          total_cost: editedData.total_cost !== '' ? parseFloat(editedData.total_cost) : null
+        })
+      });
+      if (response.ok) {
+        const updatedDoc = await response.json();
+        setDocuments(prev => prev.map(d => d.id === updatedDoc.id ? updatedDoc : d));
+        setSelectedDoc(updatedDoc);
+        setIsEditing(false);
+      } else {
+        alert("Failed to save changes.");
+      }
+    } catch (err) {
+      console.error("Save structured data error:", err);
+      alert("Network error saving changes.");
+    } finally {
+      setSavingFields(false);
+    }
+  };
   
   // Ref for native input triggers
   const fileInputRef = useRef(null);
@@ -371,7 +442,7 @@ export default function Dashboard({ token, onLogout }) {
                   </div>
                 </div>
 
-                {selectedDoc.status === 'completed' && selectedDoc.raw_text && (
+                {selectedDoc.status === 'completed' && activeTab === 'raw' && selectedDoc.raw_text && (
                   <button
                     onClick={() => copyToClipboard(selectedDoc.raw_text)}
                     className="flex items-center gap-1 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800 hover:bg-slate-750 text-xs font-semibold text-slate-300 transition-all select-none active:scale-[0.98]"
@@ -391,19 +462,287 @@ export default function Dashboard({ token, onLogout }) {
                 )}
               </div>
 
+              {/* Tab Navigation */}
+              {selectedDoc.status === 'completed' && (
+                <div className="flex border-b border-slate-800 mb-4 shrink-0">
+                  <button
+                    onClick={() => setActiveTab('structured')}
+                    className={`pb-2.5 px-4 text-xs font-semibold tracking-wide border-b-2 transition-all ${
+                      activeTab === 'structured'
+                        ? 'border-purple-500 text-purple-400 font-bold'
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Structured Challan
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('raw')}
+                    className={`pb-2.5 px-4 text-xs font-semibold tracking-wide border-b-2 transition-all ${
+                      activeTab === 'raw'
+                        ? 'border-purple-500 text-purple-400 font-bold'
+                        : 'border-transparent text-slate-400 hover:text-slate-200'
+                    }`}
+                  >
+                    Raw Extracted Text
+                  </button>
+                </div>
+              )}
+
               {/* Text Output Pane */}
               <div className="flex-1 overflow-y-auto pr-0.5 rounded-xl bg-slate-950/80 border border-slate-900/80 p-4">
                 {selectedDoc.status === 'completed' ? (
-                  selectedDoc.raw_text ? (
-                    <pre className="font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap select-text selection:bg-purple-500/35">
-                      {selectedDoc.raw_text}
-                    </pre>
-                  ) : (
-                    <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-600">
-                      <FileCheck className="h-10 w-10 mb-2 stroke-[1.5] text-slate-700" />
-                      <p className="text-xs">Document processed, but no text characters were detected.</p>
-                      <p className="text-[10px] text-slate-700 mt-0.5">Ensure image is clear and contains readable text.</p>
+                  activeTab === 'structured' ? (
+                    /* Structured Cards Mode */
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between pb-2 border-b border-slate-900">
+                        <span className="text-xs font-bold uppercase tracking-wider text-slate-450">
+                          Challan Structured Information
+                        </span>
+                        {!isEditing ? (
+                          <button
+                            onClick={() => setIsEditing(true)}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-850 bg-slate-900/60 hover:bg-slate-800 text-xs font-semibold text-slate-300 hover:text-purple-400 transition-all select-none"
+                          >
+                            <Edit className="h-3.5 w-3.5" />
+                            Edit Fields
+                          </button>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={handleSaveStructuredData}
+                              disabled={savingFields}
+                              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-xs font-semibold text-white transition-all select-none disabled:opacity-50"
+                            >
+                              {savingFields ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                              ) : (
+                                <Save className="h-3.5 w-3.5" />
+                              )}
+                              Save
+                            </button>
+                            <button
+                              onClick={() => {
+                                setIsEditing(false);
+                                setEditedData({
+                                  challan_date: selectedDoc.structured_data?.challan_date || '',
+                                  source_address: selectedDoc.structured_data?.source_address || '',
+                                  destination_address: selectedDoc.structured_data?.destination_address || '',
+                                  total_kg: selectedDoc.structured_data?.total_kg !== null && selectedDoc.structured_data?.total_kg !== undefined ? selectedDoc.structured_data.total_kg : '',
+                                  total_cost: selectedDoc.structured_data?.total_cost !== null && selectedDoc.structured_data?.total_cost !== undefined ? selectedDoc.structured_data.total_cost : ''
+                                });
+                              }}
+                              className="flex items-center gap-1 px-2 py-1.5 rounded-lg border border-slate-800 bg-slate-900 hover:bg-slate-800 text-xs font-semibold text-slate-400 hover:text-slate-200 transition-all select-none"
+                            >
+                              <X className="h-3.5 w-3.5" />
+                              Cancel
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Info Fields Grid */}
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Challan Date */}
+                        <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-850 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 text-slate-400 mb-1.5">
+                              <Calendar className="h-4 w-4 text-purple-450" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Challan Date</span>
+                            </div>
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                value={editedData.challan_date}
+                                onChange={(e) => setEditedData(prev => ({ ...prev, challan_date: e.target.value }))}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500 transition-colors"
+                                placeholder="YYYY-MM-DD or DD/MM/YYYY"
+                              />
+                            ) : (
+                              <p className="text-sm font-semibold text-slate-200 min-h-[24px]">
+                                {selectedDoc.structured_data?.challan_date || <span className="text-slate-600 font-normal italic">Not detected</span>}
+                              </p>
+                            )}
+                          </div>
+                          {!isEditing && selectedDoc.structured_data?.challan_date && (
+                            <button
+                              onClick={() => copyField('challan_date', selectedDoc.structured_data.challan_date)}
+                              className="self-end mt-2 flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-350 transition-colors"
+                            >
+                              {copiedField === 'challan_date' ? (
+                                <><Check className="h-3 w-3 text-emerald-450" /> <span className="text-emerald-400">Copied</span></>
+                              ) : (
+                                <><Copy className="h-3 w-3" /> Copy</>
+                              )}
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Total KG */}
+                        <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-850 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 text-slate-400 mb-1.5">
+                              <Scale className="h-4 w-4 text-amber-450" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total KG</span>
+                            </div>
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                step="any"
+                                value={editedData.total_kg}
+                                onChange={(e) => setEditedData(prev => ({ ...prev, total_kg: e.target.value }))}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500 transition-colors"
+                                placeholder="e.g. 12000"
+                              />
+                            ) : (
+                              <p className="text-sm font-semibold text-slate-200 min-h-[24px]">
+                                {selectedDoc.structured_data?.total_kg !== null && selectedDoc.structured_data?.total_kg !== undefined ? (
+                                  `${selectedDoc.structured_data.total_kg.toLocaleString()} KG`
+                                ) : (
+                                  <span className="text-slate-650 font-normal italic text-slate-500">Not detected</span>
+                                )}
+                              </p>
+                            )}
+                          </div>
+                          {!isEditing && selectedDoc.structured_data?.total_kg !== null && selectedDoc.structured_data?.total_kg !== undefined && (
+                            <button
+                              onClick={() => copyField('total_kg', selectedDoc.structured_data.total_kg)}
+                              className="self-end mt-2 flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-355 transition-colors"
+                            >
+                              {copiedField === 'total_kg' ? (
+                                <><Check className="h-3 w-3 text-emerald-450" /> <span className="text-emerald-405">Copied</span></>
+                              ) : (
+                                <><Copy className="h-3 w-3" /> Copy</>
+                              )}
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Total Cost */}
+                        <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-850 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 text-slate-400 mb-1.5">
+                              <Coins className="h-4 w-4 text-emerald-450" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Total Cost</span>
+                            </div>
+                            {isEditing ? (
+                              <input
+                                type="number"
+                                step="any"
+                                value={editedData.total_cost}
+                                onChange={(e) => setEditedData(prev => ({ ...prev, total_cost: e.target.value }))}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500 transition-colors"
+                                placeholder="e.g. 25000"
+                              />
+                            ) : (
+                              <p className="text-sm font-semibold text-slate-200 min-h-[24px]">
+                                {selectedDoc.structured_data?.total_cost !== null && selectedDoc.structured_data?.total_cost !== undefined ? (
+                                  `₹ ${selectedDoc.structured_data.total_cost.toLocaleString()}`
+                                ) : (
+                                  <span className="text-slate-650 font-normal italic text-slate-500">Not detected</span>
+                                )}
+                              </p>
+                            )}
+                          </div>
+                          {!isEditing && selectedDoc.structured_data?.total_cost !== null && selectedDoc.structured_data?.total_cost !== undefined && (
+                            <button
+                              onClick={() => copyField('total_cost', selectedDoc.structured_data.total_cost)}
+                              className="self-end mt-2 flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-355 transition-colors"
+                            >
+                              {copiedField === 'total_cost' ? (
+                                <><Check className="h-3 w-3 text-emerald-455" /> <span className="text-emerald-405">Copied</span></>
+                              ) : (
+                                <><Copy className="h-3 w-3" /> Copy</>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Addresses */}
+                      <div className="space-y-4 mt-2">
+                        {/* Source Address */}
+                        <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-850 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 text-slate-400 mb-1.5">
+                              <MapPin className="h-4 w-4 text-purple-450" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Source Address</span>
+                            </div>
+                            {isEditing ? (
+                              <textarea
+                                rows={2}
+                                value={editedData.source_address}
+                                onChange={(e) => setEditedData(prev => ({ ...prev, source_address: e.target.value }))}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500 transition-colors resize-y font-sans"
+                                placeholder="Origin Address"
+                              />
+                            ) : (
+                              <p className="text-xs text-slate-200 leading-relaxed font-medium min-h-[24px] whitespace-pre-wrap">
+                                {selectedDoc.structured_data?.source_address || <span className="text-slate-655 font-normal italic text-slate-500">Not detected</span>}
+                              </p>
+                            )}
+                          </div>
+                          {!isEditing && selectedDoc.structured_data?.source_address && (
+                            <button
+                              onClick={() => copyField('source_address', selectedDoc.structured_data.source_address)}
+                              className="self-end mt-2 flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-350 transition-colors"
+                            >
+                              {copiedField === 'source_address' ? (
+                                <><Check className="h-3 w-3 text-emerald-450" /> <span className="text-emerald-400">Copied</span></>
+                              ) : (
+                                <><Copy className="h-3 w-3" /> Copy Address</>
+                              )}
+                            </button>
+                          )}
+                        </div>
+
+                        {/* Destination Address */}
+                        <div className="p-3.5 rounded-xl bg-slate-900/60 border border-slate-850 flex flex-col justify-between">
+                          <div>
+                            <div className="flex items-center gap-2 text-slate-400 mb-1.5">
+                              <MapPin className="h-4 w-4 text-sky-450" />
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Destination Address</span>
+                            </div>
+                            {isEditing ? (
+                              <textarea
+                                rows={2}
+                                value={editedData.destination_address}
+                                onChange={(e) => setEditedData(prev => ({ ...prev, destination_address: e.target.value }))}
+                                className="w-full bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-purple-500 transition-colors resize-y font-sans"
+                                placeholder="Destination Address"
+                              />
+                            ) : (
+                              <p className="text-xs text-slate-200 leading-relaxed font-medium min-h-[24px] whitespace-pre-wrap">
+                                {selectedDoc.structured_data?.destination_address || <span className="text-slate-655 font-normal italic text-slate-500">Not detected</span>}
+                              </p>
+                            )}
+                          </div>
+                          {!isEditing && selectedDoc.structured_data?.destination_address && (
+                            <button
+                              onClick={() => copyField('destination_address', selectedDoc.structured_data.destination_address)}
+                              className="self-end mt-2 flex items-center gap-1 text-[10px] font-semibold text-slate-500 hover:text-slate-350 transition-colors"
+                            >
+                              {copiedField === 'destination_address' ? (
+                                <><Check className="h-3 w-3 text-emerald-450" /> <span className="text-emerald-400">Copied</span></>
+                              ) : (
+                                <><Copy className="h-3 w-3" /> Copy Address</>
+                              )}
+                            </button>
+                          )}
+                        </div>
+                      </div>
                     </div>
+                  ) : (
+                    /* Raw text display mode */
+                    selectedDoc.raw_text ? (
+                      <pre className="font-mono text-xs text-slate-300 leading-relaxed whitespace-pre-wrap select-text selection:bg-purple-500/35">
+                        {selectedDoc.raw_text}
+                      </pre>
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center text-center p-6 text-slate-600">
+                        <FileCheck className="h-10 w-10 mb-2 stroke-[1.5] text-slate-700" />
+                        <p className="text-xs">Document processed, but no text characters were detected.</p>
+                      </div>
+                    )
                   )
                 ) : selectedDoc.status === 'processing' ? (
                   <div className="h-full flex flex-col items-center justify-center text-center p-6 bg-slate-950/20 rounded-xl">
